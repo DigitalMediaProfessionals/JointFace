@@ -14,6 +14,8 @@
  *  limitations under the License.
  */
 
+#define USE_LINEAR_INTERPOLATION 1
+
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -126,8 +128,8 @@ __fp16 imgProc[IMAGE_W * IMAGE_H * 3];
 
 uint32_t fc = 0;
 
+volatile int cpu_time_tot = 0;
 volatile int conv_time_tot = 0;
-volatile int fc_time_tot = 0;
 
 static void rect2square(float &x1, float &y1, float &x2, float &y2) {
   float w = x2 - x1;
@@ -282,13 +284,18 @@ static void resample(__fp16 *src_img, __fp16 *dst_img, int src_w, int src_h,
   for (int y = 0; y < dst_h; y++) {
     float ty = (y + 0.5f) * sy;
     int iy = int(ty);
+#if USE_LINEAR_INTERPOLATION
     float ry = ty - iy;
+#endif
     for (int x = 0; x < dst_w; x++) {
       float tx = (x + 0.5f) * sx;
       int ix = int(tx);
+#if USE_LINEAR_INTERPOLATION
       float rx = tx - ix;
+#endif
       float r = 0.f, g = 0.f, b = 0.f;
       __fp16 *p;
+#if USE_LINEAR_INTERPOLATION
       p = &src_img[((iy + 0) * src_w + (ix + 0)) * 3];
       r += p[0] * rx * ry;
       g += p[1] * rx * ry;
@@ -305,6 +312,12 @@ static void resample(__fp16 *src_img, __fp16 *dst_img, int src_w, int src_h,
       r += p[0] * (1.f - rx) * (1.f - ry);
       g += p[1] * (1.f - rx) * (1.f - ry);
       b += p[2] * (1.f - rx) * (1.f - ry);
+#else
+      p = &src_img[((iy) * src_w + (ix)) * 3];
+      r = p[0];
+      g = p[1];
+      b = p[2];
+#endif
       p = &dst_img[(y * dst_w + x) * 3];
       p[0] = static_cast<__fp16>(r);
       p[1] = static_cast<__fp16>(g);
@@ -318,6 +331,7 @@ static void downsample(__fp16 *src_img, __fp16 *dst_img, int dst_w, int dst_h) {
     for (int x = 0; x < dst_w; x++) {
       float r = 0.f, g = 0.f, b = 0.f;
       __fp16 *p;
+#if USE_LINEAR_INTERPOLATION
       p = &src_img[((y * 2 + 0) * dst_w * 2 + (x * 2 + 0)) * 3];
       r += p[0];
       g += p[1];
@@ -338,6 +352,16 @@ static void downsample(__fp16 *src_img, __fp16 *dst_img, int dst_w, int dst_h) {
       p[0] = static_cast<__fp16>(r * 0.25f);
       p[1] = static_cast<__fp16>(g * 0.25f);
       p[2] = static_cast<__fp16>(b * 0.25f);
+#else
+      p = &src_img[((y * 2) * dst_w * 2 + (x * 2)) * 3];
+      r = p[0];
+      g = p[1];
+      b = p[2];
+      p = &dst_img[(y * dst_w + x) * 3];
+      p[0] = static_cast<__fp16>(r);
+      p[1] = static_cast<__fp16>(g);
+      p[2] = static_cast<__fp16>(b);
+#endif
     }
   }
 }
@@ -350,13 +374,18 @@ static void crop_resample(__fp16 *src_img, __fp16 *dst_img, int c_x, int c_y,
   for (int y = 0; y < dst_h; y++) {
     float ty = (y + 0.5f) * sy;
     int iy = int(ty);
+#if USE_LINEAR_INTERPOLATION
     float ry = ty - iy;
+#endif
     for (int x = 0; x < dst_w; x++) {
       float tx = (x + 0.5f) * sx;
       int ix = int(tx);
+#if USE_LINEAR_INTERPOLATION
       float rx = tx - ix;
+#endif
       float r = 0.f, g = 0.f, b = 0.f;
       __fp16 *p;
+#if USE_LINEAR_INTERPOLATION
       p = &src_img[((c_y + iy + 0) * src_w + (c_x + ix + 0)) * 3];
       r += p[0] * rx * ry;
       g += p[1] * rx * ry;
@@ -373,6 +402,12 @@ static void crop_resample(__fp16 *src_img, __fp16 *dst_img, int c_x, int c_y,
       r += p[0] * (1.f - rx) * (1.f - ry);
       g += p[1] * (1.f - rx) * (1.f - ry);
       b += p[2] * (1.f - rx) * (1.f - ry);
+#else
+      p = &src_img[((c_y + iy) * src_w + (c_x + ix)) * 3];
+      r = p[0];
+      g = p[1];
+      b = p[2];
+#endif
       p = &dst_img[(y * dst_w + x) * 3];
       p[0] = static_cast<__fp16>(r);
       p[1] = static_cast<__fp16>(g);
@@ -553,16 +588,19 @@ int main(int argc, char **argv) {
 
     // Run 12Net
     rect.clear();
+    cpu_time_tot = 0;
     conv_time_tot = 0;
-    fc_time_tot = 0;
+    TimeInterval ti;
+
     // Copy image to FPGA memory
+    ti.reset();
     prepare_net_12_inputs();
+    cpu_time_tot += ti.get_us();
 
     for (int i = 0; i < net_12_size; ++i) {
       // start a new HW run
       net_12[i].net->RunNetwork();
       conv_time_tot += net_12[i].net->get_conv_usec();
-      fc_time_tot += net_12[i].net->get_fc_usec();
 
       // handle output
       net_12[i].net->get_final_output(prob, 0);
@@ -577,12 +615,13 @@ int main(int argc, char **argv) {
     for (auto it = rect.begin(); it != rect.end(); ++it) {
       int w = it->x2 - it->x1;
       int h = it->y2 - it->y1;
+      ti.reset();
       crop_resample(imgProc, net_input_24, it->x1, it->y1, w, h,
         IMAGE_W, IMAGE_H, 24, 24);
-      // run 24Net
+      cpu_time_tot += ti.get_us();
+    // run 24Net
       net_24.RunNetwork();
       conv_time_tot += net_24.get_conv_usec();
-      fc_time_tot += net_24.get_fc_usec();
       // handle output
       net_24.get_final_output(prob, 0);
       net_24.get_final_output(temp, 1);
@@ -600,12 +639,13 @@ int main(int argc, char **argv) {
     for (auto it = rect.begin(); it != rect.end(); ++it) {
       int w = it->x2 - it->x1;
       int h = it->y2 - it->y1;
+      ti.reset();
       crop_resample(imgProc, net_input_48, it->x1, it->y1, w, h,
         IMAGE_W, IMAGE_H, 48, 48);
+      cpu_time_tot += ti.get_us();
       // run 48Net
       net_48.RunNetwork();
       conv_time_tot += net_48.get_conv_usec();
-      fc_time_tot += net_48.get_fc_usec();
       // handle output
       net_48.get_final_output(prob, 0);
       net_48.get_final_output(temp, 2); // roi
@@ -629,15 +669,28 @@ int main(int argc, char **argv) {
 
     // HW processing times
     if (conv_time_tot != 0) {
-      string text = COverlayRGB::convert_time_to_text("Convolution (" + conv_freq + " MHz HW ACC)     : ", conv_time_tot);
+      string text;
       unsigned text_size = 14;
-
       unsigned w = 0;
       unsigned h = 0;
+
+      text = COverlayRGB::convert_time_to_text("CPU Re-size time                 : ", cpu_time_tot);
       COverlayRGB::calculate_boundary_text(text, text_size, w, h);
 
       int x = ((SCREEN_W - w) / 2);
       int y = (145 + IMAGE_H);
+
+      COverlayRGB overlay_time_cpu(SCREEN_W, SCREEN_H);
+      overlay_time_cpu.alloc_mem_overlay(w, h);
+      overlay_time_cpu.copy_overlay(bg_overlay, x, y);
+      overlay_time_cpu.set_text(0, 0, text, text_size, 0x00f4419d);
+      overlay_time_cpu.print_to_display(x, y);
+
+      text = COverlayRGB::convert_time_to_text("Convolution (" + conv_freq + " MHz HW ACC)     : ", conv_time_tot);
+      COverlayRGB::calculate_boundary_text(text, text_size, w, h);
+
+      x = ((SCREEN_W - w) / 2);
+      y = (165 + IMAGE_H);
 
       COverlayRGB overlay_time(SCREEN_W, SCREEN_H);
       overlay_time.alloc_mem_overlay(w, h);
