@@ -25,7 +25,10 @@ $ python ../../../tool/convertor.py 12net_640x480.ini
 $ python ../../../tool/convertor.py 24net.ini
 $ python ../../../tool/convertor.py 48net.ini
 ```
+**NOTE**: The original only have 3 networks, but 12Net is run several times with different input size.
+Because the limitation of the tool, each input size must have their own configs for the FPGA.
 
 3. Copy the generated FPGA network configs to the root folder.
 
 4. Copy the generated weight files to the FPGA SD card, to the `bin/`folder.
+The 12Net generated 11 weight files, but they are all the same. Just copy one of them and rename it to `12Net_weights.bin`
