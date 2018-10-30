@@ -1,0 +1,46 @@
+diff mtcnn-caffe/24net/24net.prototxt mtcnn-caffe/24net/24net.prototxt
+--- mtcnn-caffe/24net/24net.prototxt
++++ mtcnn-caffe/24net/24net.prototxt
+@@ -128,7 +128,7 @@ layer {
+ }
+ layer {
+   name: "conv4"
+-  type: "InnerProduct"
++  type: "Convolution"
+   bottom: "conv3"
+   top: "conv4"
+   param {
+@@ -139,8 +139,9 @@ layer {
+     lr_mult: 0
+     decay_mult: 0
+   }
+-  inner_product_param {
++  convolution_param {
+     num_output: 128
++    kernel_size: 3
+     weight_filler {
+       type: "xavier"
+ 	}
+diff mtcnn-caffe/48net/48net.prototxt mtcnn-caffe/48net/48net.prototxt
+--- mtcnn-caffe/48net/48net.prototxt
++++ mtcnn-caffe/48net/48net.prototxt
+@@ -169,7 +169,7 @@ layer {
+ 
+ layer {
+   name: "conv5"
+-  type: "InnerProduct"
++  type: "Convolution"
+   bottom: "conv4"
+   top: "conv5"
+   param {
+@@ -180,8 +180,8 @@ layer {
+     lr_mult: 2
+     decay_mult: 1
+   }
+-  inner_product_param {
+-	#kernel_size: 3
++  convolution_param {
++	kernel_size: 3
+ 	num_output: 256
+     weight_filler {
+       type: "xavier"
