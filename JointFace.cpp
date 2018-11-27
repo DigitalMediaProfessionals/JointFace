@@ -14,8 +14,6 @@
  *  limitations under the License.
  */
 
-#define USE_LINEAR_INTERPOLATION 1
-
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,7 +47,24 @@
 #include "48Net_gen.h"
 #include "util_draw.h"
 #include "util_input.h"
+#include "demo_common.h"
+#include "face_process.h"
 
+using namespace std;
+using namespace dmp;
+using namespace util;
+
+#define SCREEN_W (get_screen_width())
+#define SCREEN_H (get_screen_height())
+
+#define IMAGE_W 640
+#define IMAGE_H 480
+
+#define FILENAME_WEIGHTS12 "12Net_weights.bin"
+#define FILENAME_WEIGHTS24 "24Net_weights.bin"
+#define FILENAME_WEIGHTS48 "48Net_weights.bin"
+
+// Define CNN network model objects
 C12Net_640x480 net_12_640x480;
 C12Net_448x336 net_12_448x336;
 C12Net_320x240 net_12_320x240;
@@ -64,16 +79,7 @@ C12Net_20x15 net_12_20x15;
 C24Net net_24;
 C48Net net_48;
 
-struct C12Net {
-  CDMP_Network *net;
-  int in_w;
-  int in_h;
-  int out_w;
-  int out_h;
-  float scale;
-  void *in_buf;
-};
-
+// C12Net scaled network series
 C12Net net_12[] = {
   { &net_12_640x480, 640, 480, 315, 235, 1.0f,       nullptr },
   { &net_12_448x336, 448, 336, 219, 163, 1.4285714f, nullptr },
@@ -90,423 +96,24 @@ C12Net net_12[] = {
 
 const int net_12_size = sizeof(net_12) / sizeof(net_12[0]);
 
-using namespace dmp;
-using namespace util;
-
-#define FILENAME_WEIGHTS12 "12Net_weights.bin"
-#define FILENAME_WEIGHTS24 "24Net_weights.bin"
-#define FILENAME_WEIGHTS48 "48Net_weights.bin"
-
-using namespace std;
-
-#define SCREEN_W (dmp::util::get_screen_width())
-#define SCREEN_H (dmp::util::get_screen_height())
-
-#define IMAGE_W 640
-#define IMAGE_H 480
-
-struct rectangle {
-  int x1;
-  int y1;
-  int x2;
-  int y2;
-  float p;
-};
-
-struct rect_point {
-  int x1;
-  int y1;
-  int x2;
-  int y2;
-  float p;
-  int px[5];
-  int py[5];
-};
-
+// Buffer for decoded image data
 uint32_t imgView[IMAGE_W * IMAGE_H];
+// Buffer for pre-processed image data
 __fp16 imgProc[IMAGE_W * IMAGE_H * 3];
 
-uint32_t fc = 0;
-
-volatile int cpu_time_tot = 0;
-volatile int conv_time_tot = 0;
-
-static void rect2square(float &x1, float &y1, float &x2, float &y2) {
-  float w = x2 - x1;
-  float h = y2 - y1;
-  float l = max(w, h);
-  x1 = x1 + w * 0.5f - l * 0.5f;
-  y1 = y1 + h * 0.5f - l * 0.5f;
-  x2 = x1 + l;
-  y2 = y1 + l;
-}
-
-template <typename T>
-static inline T overlap(T x1, T w1, T x2, T w2) {
-  T left = max(x1, x2);
-  T right = min(x1 + w1, x2 + w2);
-  return max(right - left, 0);
-}
-
-template <typename T>
-static float box_iou(const T *a, const T *b) {
-  T ow = overlap(a[0], a[2], b[0], b[2]);
-  T oh = overlap(a[1], a[3], b[1], b[3]);
-  float box_int = ow * oh;
-  float box_uni = a[2] * a[3] + b[2] * b[3] - box_int;
-  return box_int / box_uni;
-}
-
-static void do_nms(vector<rectangle> &rect, float threshold) {
-  sort(rect.begin(), rect.end(),
-       [](const rectangle &a, const rectangle &b) -> bool {
-         return a.p > b.p;
-       });
-  size_t i, j;
-  for (i = 0; i < rect.size() - 1; ++i) {
-    if (rect[i].p == 0.0f)
-      continue;
-    for (j = i + 1; j < rect.size(); ++j) {
-      if (rect[j].p == 0.0f)
-        continue;
-      if (box_iou(&rect[i].x1, &rect[j].x1) > threshold)
-        rect[j].p = 0.0f;
-    }
-  }
-}
-
-static void detect_face_12net(vector<rectangle> &rect, vector<float> &prob,
-    vector<float> &roi, float scale, int o_width, int o_height,
-    float threshold) {
-  int x, y;
-  float x1, y1, x2, y2, p;
-  rectangle r;
-  vector<rectangle> pick;
-
-  for (x = 0; x < o_width; ++x) {
-    for (y = 0; y < o_height; ++y) {
-      p = prob[(x * o_height + y) * 2 + 1];
-      if (p < threshold)
-        continue;
-      x1 = floor(x * 2.f * scale);
-      y1 = floor(y * 2.f * scale);
-      x2 = floor((x * 2.f + 12.f) * scale);
-      y2 = floor((y * 2.f + 12.f) * scale);
-      x1 += roi[(y * o_width + x) * 4 + 0] * 12.f * scale;
-      y1 += roi[(y * o_width + x) * 4 + 1] * 12.f * scale;
-      x2 += roi[(y * o_width + x) * 4 + 2] * 12.f * scale;
-      y2 += roi[(y * o_width + x) * 4 + 3] * 12.f * scale;
-      rect2square(x1, y1, x2, y2);
-      r.x1 = max(0, int(x1));
-      r.y1 = max(0, int(y1));
-      r.x2 = min(IMAGE_W, int(x2));
-      r.y2 = min(IMAGE_H, int(y2));
-      r.p = p;
-      if (r.x2 > r.x1 && r.y2 > r.y1)
-        pick.push_back(r);
-    }
-  }
-  if (pick.size() > 0)
-    do_nms(pick, 0.5);
-  for (auto it = pick.begin(); it != pick.end(); ++it) {
-    if (it->p != 0.0f)
-      rect.push_back(*it);
-  }
-}
-
-static void filter_face_24net(vector<rectangle> &rect, vector<float> &roi) {
-  vector<rectangle> pick;
-  for (size_t i = 0; i < rect.size(); ++i) {
-    if (rect[i].p == 0.0f)
-      continue;
-    float w = rect[i].x2 - rect[i].x1;
-    float h = rect[i].y2 - rect[i].y1;
-    float x1 = rect[i].x1 + roi[i * 4 + 0] * w;
-    float y1 = rect[i].y1 + roi[i * 4 + 1] * h;
-    float x2 = rect[i].x2 + roi[i * 4 + 2] * w;
-    float y2 = rect[i].y2 + roi[i * 4 + 3] * h;
-    rect2square(x1, y1, x2, y2);
-    rect[i].x1 = max(0, int(x1));
-    rect[i].y1 = max(0, int(y1));
-    rect[i].x2 = min(IMAGE_W, int(x2));
-    rect[i].y2 = min(IMAGE_H, int(y2));
-    if (rect[i].x2 > rect[i].x1 && rect[i].y2 > rect[i].y1)
-      pick.push_back(rect[i]);
-  }
-  if (pick.size() > 0)
-    do_nms(pick, 0.7);
-  rect.clear();
-  for (auto it = pick.begin(); it != pick.end(); ++it) {
-    if (it->p != 0.0f)
-      rect.push_back(*it);
-  }
-}
-
-static void filter_face_48net(vector<rectangle> &rect, vector<float> &roi,
-    vector<float> &pts, vector<rect_point> &result) {
-  rect_point r;
-  vector<rect_point> pick;
-  for (size_t i = 0; i < rect.size(); ++i) {
-    if (rect[i].p == 0.0f)
-      continue;
-    float w = rect[i].x2 - rect[i].x1;
-    float h = rect[i].y2 - rect[i].y1;
-    float x1 = rect[i].x1 + roi[i * 4 + 0] * w;
-    float y1 = rect[i].y1 + roi[i * 4 + 1] * h;
-    float x2 = rect[i].x2 + roi[i * 4 + 2] * w;
-    float y2 = rect[i].y2 + roi[i * 4 + 3] * h;
-    for (int j = 0; j < 5; ++j) {
-      r.px[j] = rect[i].x1 + pts[i * 10 + j] * w;
-      r.py[j] = rect[i].y1 + pts[i * 10 + j + 5] * h;
-    }
-    r.x1 = max(0, int(x1));
-    r.y1 = max(0, int(y1));
-    r.x2 = min(IMAGE_W, int(x2));
-    r.y2 = min(IMAGE_H, int(y2));
-    r.p = rect[i].p;
-    if (r.x2 > r.x1 && r.y2 > r.y1)
-      pick.push_back(r);
-  }
-  //if (pick.size() > 0)
-  //  do_nms(pick, 0.7);
-  result.clear();
-  for (auto it = pick.begin(); it != pick.end(); ++it) {
-    if (it->p != 0.0f)
-      result.push_back(*it);
-  }
-}
-
-static void resample(__fp16 *src_img, __fp16 *dst_img, int src_w, int src_h,
-                     int dst_w, int dst_h) {
-  float sx = float(src_w) / float(dst_w);
-  float sy = float(src_h) / float(dst_h);
-
-  for (int y = 0; y < dst_h; y++) {
-    float ty = (y + 0.5f) * sy;
-    int iy = int(ty);
-#if USE_LINEAR_INTERPOLATION
-    float ry = ty - iy;
-#endif
-    for (int x = 0; x < dst_w; x++) {
-      float tx = (x + 0.5f) * sx;
-      int ix = int(tx);
-#if USE_LINEAR_INTERPOLATION
-      float rx = tx - ix;
-#endif
-      float r = 0.f, g = 0.f, b = 0.f;
-      __fp16 *p;
-#if USE_LINEAR_INTERPOLATION
-      p = &src_img[((iy + 0) * src_w + (ix + 0)) * 3];
-      r += p[0] * rx * ry;
-      g += p[1] * rx * ry;
-      b += p[2] * rx * ry;
-      p = &src_img[((iy + 0) * src_w + (ix + 1)) * 3];
-      r += p[0] * (1.f - rx) * ry;
-      g += p[1] * (1.f - rx) * ry;
-      b += p[2] * (1.f - rx) * ry;
-      p = &src_img[((iy + 1) * src_w + (ix + 0)) * 3];
-      r += p[0] * rx * (1.f - ry);
-      g += p[1] * rx * (1.f - ry);
-      b += p[2] * rx * (1.f - ry);
-      p = &src_img[((iy + 1) * src_w + (ix + 1)) * 3];
-      r += p[0] * (1.f - rx) * (1.f - ry);
-      g += p[1] * (1.f - rx) * (1.f - ry);
-      b += p[2] * (1.f - rx) * (1.f - ry);
-#else
-      p = &src_img[((iy) * src_w + (ix)) * 3];
-      r = p[0];
-      g = p[1];
-      b = p[2];
-#endif
-      p = &dst_img[(y * dst_w + x) * 3];
-      p[0] = static_cast<__fp16>(r);
-      p[1] = static_cast<__fp16>(g);
-      p[2] = static_cast<__fp16>(b);
-    }
-  }
-}
-
-static void downsample(__fp16 *src_img, __fp16 *dst_img, int dst_w, int dst_h) {
-  for (int y = 0; y < dst_h; y++) {
-    for (int x = 0; x < dst_w; x++) {
-      float r = 0.f, g = 0.f, b = 0.f;
-      __fp16 *p;
-#if USE_LINEAR_INTERPOLATION
-      p = &src_img[((y * 2 + 0) * dst_w * 2 + (x * 2 + 0)) * 3];
-      r += p[0];
-      g += p[1];
-      b += p[2];
-      p = &src_img[((y * 2 + 0) * dst_w * 2 + (x * 2 + 1)) * 3];
-      r += p[0];
-      g += p[1];
-      b += p[2];
-      p = &src_img[((y * 2 + 1) * dst_w * 2 + (x * 2 + 0)) * 3];
-      r += p[0];
-      g += p[1];
-      b += p[2];
-      p = &src_img[((y * 2 + 1) * dst_w * 2 + (x * 2 + 1)) * 3];
-      r += p[0];
-      g += p[1];
-      b += p[2];
-      p = &dst_img[(y * dst_w + x) * 3];
-      p[0] = static_cast<__fp16>(r * 0.25f);
-      p[1] = static_cast<__fp16>(g * 0.25f);
-      p[2] = static_cast<__fp16>(b * 0.25f);
-#else
-      p = &src_img[((y * 2) * dst_w * 2 + (x * 2)) * 3];
-      r = p[0];
-      g = p[1];
-      b = p[2];
-      p = &dst_img[(y * dst_w + x) * 3];
-      p[0] = static_cast<__fp16>(r);
-      p[1] = static_cast<__fp16>(g);
-      p[2] = static_cast<__fp16>(b);
-#endif
-    }
-  }
-}
-
-static void crop_resample(__fp16 *src_img, __fp16 *dst_img, int c_x, int c_y,
-    int c_w, int c_h, int src_w, int src_h, int dst_w, int dst_h) {
-  float sx = float(c_w) / float(dst_w);
-  float sy = float(c_h) / float(dst_h);
-
-  for (int y = 0; y < dst_h; y++) {
-    float ty = (y + 0.5f) * sy;
-    int iy = int(ty);
-#if USE_LINEAR_INTERPOLATION
-    float ry = ty - iy;
-#endif
-    for (int x = 0; x < dst_w; x++) {
-      float tx = (x + 0.5f) * sx;
-      int ix = int(tx);
-#if USE_LINEAR_INTERPOLATION
-      float rx = tx - ix;
-#endif
-      float r = 0.f, g = 0.f, b = 0.f;
-      __fp16 *p;
-#if USE_LINEAR_INTERPOLATION
-      p = &src_img[((c_y + iy + 0) * src_w + (c_x + ix + 0)) * 3];
-      r += p[0] * rx * ry;
-      g += p[1] * rx * ry;
-      b += p[2] * rx * ry;
-      p = &src_img[((c_y + iy + 0) * src_w + (c_x + ix + 1)) * 3];
-      r += p[0] * (1.f - rx) * ry;
-      g += p[1] * (1.f - rx) * ry;
-      b += p[2] * (1.f - rx) * ry;
-      p = &src_img[((c_y + iy + 1) * src_w + (c_x + ix + 0)) * 3];
-      r += p[0] * rx * (1.f - ry);
-      g += p[1] * rx * (1.f - ry);
-      b += p[2] * rx * (1.f - ry);
-      p = &src_img[((c_y + iy + 1) * src_w + (c_x + ix + 1)) * 3];
-      r += p[0] * (1.f - rx) * (1.f - ry);
-      g += p[1] * (1.f - rx) * (1.f - ry);
-      b += p[2] * (1.f - rx) * (1.f - ry);
-#else
-      p = &src_img[((c_y + iy) * src_w + (c_x + ix)) * 3];
-      r = p[0];
-      g = p[1];
-      b = p[2];
-#endif
-      p = &dst_img[(y * dst_w + x) * 3];
-      p[0] = static_cast<__fp16>(r);
-      p[1] = static_cast<__fp16>(g);
-      p[2] = static_cast<__fp16>(b);
-    }
-  }
-}
-
-static void prepare_net_12_inputs(void) {
-  __fp16 *src_img, *dst_img;
-  memcpy(net_12[0].in_buf, (void *)imgProc, IMAGE_W * IMAGE_H * 3 * 2);
-  
-  // resample for level 1
-  src_img = reinterpret_cast<__fp16 *>(imgProc);
-  dst_img = reinterpret_cast<__fp16 *>(net_12[1].in_buf);
-  resample(src_img, dst_img, net_12[0].in_w, net_12[0].in_h,
-    net_12[1].in_w, net_12[1].in_h);
-    
-  // downsample for level 2~
-  for (int i = 2; i < net_12_size; ++i) {
-    src_img = reinterpret_cast<__fp16 *>(net_12[i - 2].in_buf);
-    dst_img = reinterpret_cast<__fp16 *>(net_12[i].in_buf);
-    downsample(src_img, dst_img, net_12[i].in_w, net_12[i].in_h);
-  }
-}
-
-static void print_demo_title(COverlayRGB &bg_overlay) {
-  unsigned text_size = 30;
-  string font_file = "font/NotoSerif-Black.ttf";
-  string text;
-  unsigned w = 0;
-  unsigned h = 0;
-  int x;
-  int y;
-  COverlayRGB bg_text(SCREEN_W, SCREEN_H);
-
-  text = "Joint Face Detection";
-  COverlayRGB::calculate_boundary_text_with_font(font_file, text, text_size, w, h);
-  x = ((SCREEN_W - w) / 2);
-  y = 25;
-  bg_text.alloc_mem_overlay(w, h);
-  bg_text.copy_overlay(bg_overlay, x, y);
-  bg_text.set_text_with_font(font_file, text, 0, 3*h/4, text_size, 0x00ffffff);
-  bg_text.print_to_display(x, y);
-
-  text = "FPGA Demonstration";
-  COverlayRGB::calculate_boundary_text_with_font(font_file, text, text_size, w, h);
-  x = ((SCREEN_W - w) / 2);
-  y = 65;
-  bg_text.delete_overlay();
-  bg_text.alloc_mem_overlay(w, h);
-  bg_text.copy_overlay(bg_overlay, x, y);
-  
-  bg_text.set_text_with_font(font_file, text, 0, 3*h/4, text_size, 0x00ffffff);
-  bg_text.print_to_display(x, y);
-
-  text_size = 11;
-  text = "Copyright 2018. Digital Media Professionals Inc.";
-  COverlayRGB::calculate_boundary_text_with_font(font_file, text, text_size, w, h);
-  x = 5;
-  y = SCREEN_H - 20;
-  bg_text.delete_overlay();
-  bg_text.alloc_mem_overlay(w, h);
-  bg_text.copy_overlay(bg_overlay, x, y);
-  bg_text.set_text_with_font(font_file, text, 0, 3*h/4, text_size, 0x00ffffff);
-  bg_text.print_to_display(x, y);
-}
-
-static void draw_bboxes(const vector<rect_point> &boxes, COverlayRGB &overlay) {
-  for (auto it = boxes.begin(); it != boxes.end(); ++it) {
-    uint32_t color1 = 0xFFu;
-    uint32_t color2 = 0xFF00u;
-
-    overlay.set_box(it->x1, it->y1, it->x2, it->y2, color1);
-    for (int i = 0; i < 5; i++) {
-      overlay.set_box(it->px[i], it->py[i], it->px[i] + 1, it->py[i] + 1, color2);
-    }
-  }
-}
-
 int main(int argc, char **argv) {
-  if (!dmp::util::init_fb()) {
-    fprintf(stderr, "dmp::util::init_fb() failed\n");
+  // Initialize FB
+  if (!init_fb()) {
+    cout << "init_fb() failed." << endl;
     return 1;
   }
 
-  vector<float> prob, roi, pts;
-  vector<rectangle> rect;
-  vector<rect_point> result;
-
+  // Initialize WebCam
   if (dmp::util::open_cam(IMAGE_W, IMAGE_H, 20)) {
     return -1;
   }
-  COverlayRGB bg_overlay(SCREEN_W, SCREEN_H);
-  bg_overlay.alloc_mem_overlay(SCREEN_W, SCREEN_H);
-  bg_overlay.load_ppm_img("fpgatitle");
-  COverlayRGB cam_overlay(SCREEN_W, SCREEN_H);
-  cam_overlay.alloc_mem_overlay(IMAGE_W, IMAGE_H);
 
+  // Initialize network objects
   for (int i = 0; i < net_12_size; ++i) {
     net_12[i].net->Verbose(0);
     if (!net_12[i].net->Initialize())
@@ -517,7 +124,7 @@ int main(int argc, char **argv) {
       return -1;
     net_12[i].in_buf = net_12[i].net->get_network_input_addr_cpu();
   }
-  
+
   net_24.Verbose(0);
   if (!net_24.Initialize())
     return -1;
@@ -525,9 +132,9 @@ int main(int argc, char **argv) {
     return -1;
   if (!net_24.Commit())
     return -1;
-  __fp16 *net_input_24 = 
+  __fp16 *net_input_24 =
     reinterpret_cast<__fp16 *>(net_24.get_network_input_addr_cpu());
-  
+
   net_48.Verbose(0);
   if (!net_48.Initialize())
     return -1;
@@ -535,66 +142,58 @@ int main(int argc, char **argv) {
     return -1;
   if (!net_48.Commit())
     return -1;
-  __fp16 *net_input_48 = 
+  __fp16 *net_input_48 =
     reinterpret_cast<__fp16 *>(net_48.get_network_input_addr_cpu());
-  
-  string conv_freq, fc_freq;
+
+  // Get HW module frequency
+  string conv_freq;
   conv_freq = to_string(net_12_640x480.get_dv_info().conv_freq);
-  fc_freq = to_string(net_12_640x480.get_dv_info().fc_freq);
+
+  // Create background and image overlay
+  COverlayRGB bg_overlay(SCREEN_W, SCREEN_H);
+  bg_overlay.alloc_mem_overlay(SCREEN_W, SCREEN_H);
+  bg_overlay.load_ppm_img("fpgatitle");
+  COverlayRGB cam_overlay(SCREEN_W, SCREEN_H);
+  cam_overlay.alloc_mem_overlay(IMAGE_W, IMAGE_H);
+
+  // Draw background two times for front and back buffer
+  const char *titles[] = {
+    "Joint Face",
+    "Face and Feature Points Detection",
+  };
+  for (int i = 0; i < 2; ++i) {
+    bg_overlay.print_to_display(0, 0);
+    print_demo_title(bg_overlay, titles);
+    swap_buffer();
+  }
 
   int exit_code = -1;
   bool pause = false;
-
+  vector<float> prob, roi, pts;
+  vector<rectangle> rect;
+  vector<rect_point> result;
+  int cpu_time_tot, conv_time_tot;
+  TimeInterval ti;
+  // Enter main loop
   while (exit_code == -1) {
-    // Static Images
-    if (fc < 2) {
-      bg_overlay.print_to_display(0, 0);
-      print_demo_title(bg_overlay);
-      dmp::util::swap_buffer();
-      fc++;  // Frame Counter
-      continue;
-    }
-
-    int key = getchar();
-    switch (key) {
-      case 27:  // ESC
-      {
-        int next_key = getchar();
-        switch (next_key) {
-          case 91:  // there are more value to read: UP/DOWN/LEFT/RIGHT pressed
-            break;
-          case 79:  // F3 pressed
-            break;
-          default:  // nothing special was pressed, will exit
-            exit_code = 0;
-            break;
-        }
-        break;
-      }
-      case 32:  // SPACE
-        pause = !pause;
-        break;
-    }
-
+    // If not pause, get a new image from WebCam and do Pre-processing
     if (!pause) {
-      if (dmp::util::capture_cam(imgView, IMAGE_W, IMAGE_H, 0, 0,
-                                 IMAGE_W, IMAGE_H)) {
+      if (capture_cam(imgView, IMAGE_W, IMAGE_H, 0, 0, IMAGE_W, IMAGE_H)) {
         break;
       }
-      cam_overlay.convert_to_overlay_pixel_format(imgView, IMAGE_W*IMAGE_H);
-      dmp::util::preproc_image(imgView, imgProc, IMAGE_W, IMAGE_H,
-        -127.5f, -127.5f, -127.5f, 1.0f / 128.0f, false);
+      cam_overlay.convert_to_overlay_pixel_format(imgView, IMAGE_W * IMAGE_H);
+      preproc_image(imgView, imgProc, IMAGE_W, IMAGE_H, -127.5f, -127.5f, -127.5f,
+                    1.0f / 128.0f, false);
     }
 
     // Run 12Net
     rect.clear();
     cpu_time_tot = 0;
     conv_time_tot = 0;
-    TimeInterval ti;
 
     // Copy image to FPGA memory
     ti.reset();
-    prepare_net_12_inputs();
+    prepare_net_12_inputs(net_12_size);
     cpu_time_tot += ti.get_us();
 
     for (int i = 0; i < net_12_size; ++i) {
@@ -608,7 +207,7 @@ int main(int argc, char **argv) {
       detect_face_12net(rect, prob, roi, net_12[i].scale,
         net_12[i].out_w, net_12[i].out_h, 0.6f);
     }
-    
+
     // Run 24Net
     vector<float> temp;
     roi.clear();
@@ -619,7 +218,7 @@ int main(int argc, char **argv) {
       crop_resample(imgProc, net_input_24, it->x1, it->y1, w, h,
         IMAGE_W, IMAGE_H, 24, 24);
       cpu_time_tot += ti.get_us();
-    // run 24Net
+      // run 24Net
       net_24.RunNetwork();
       conv_time_tot += net_24.get_conv_usec();
       // handle output
@@ -631,7 +230,7 @@ int main(int argc, char **argv) {
       copy(temp.begin(), temp.end(), back_inserter(roi));
     }
     filter_face_24net(rect, roi);
-    
+
     // Run 48Net
     vector<float> temp2;
     roi.clear();
@@ -657,49 +256,31 @@ int main(int argc, char **argv) {
       copy(temp2.begin(), temp2.end(), back_inserter(pts));
     }
     filter_face_48net(rect, roi, pts, result);
-    
+
+    // Draw result
     draw_bboxes(result, cam_overlay);
-    
-    int x = ((SCREEN_W - IMAGE_W) / 2);
-    int y = 115;
-    cam_overlay.print_to_display(x, y);
+    cam_overlay.print_to_display(((SCREEN_W - IMAGE_W) / 2), 115);
 
-    dmp::util::swap_buffer();
-    fc++;
+    // Output CPU processing times
+    string text = COverlayRGB::convert_time_to_text("CPU Re-size time                 : ", cpu_time_tot);
+    unsigned text_size = 14;
+    unsigned w = 0;
+    unsigned h = 0;
+    COverlayRGB::calculate_boundary_text(text, text_size, w, h);
+    int x = ((SCREEN_W - w) / 2);
+    int y = (135 + IMAGE_H);
+    COverlayRGB overlay_time_cpu(SCREEN_W, SCREEN_H);
+    overlay_time_cpu.alloc_mem_overlay(w, h);
+    overlay_time_cpu.copy_overlay(bg_overlay, x, y);
+    overlay_time_cpu.set_text(0, 0, text, text_size, 0x00f4419d);
+    overlay_time_cpu.print_to_display(x, y);
+    // Output HW processing times
+    print_conv_time(bg_overlay, (165 + IMAGE_H), conv_time_tot, conv_freq);
 
-    // HW processing times
-    if (conv_time_tot != 0) {
-      string text;
-      unsigned text_size = 14;
-      unsigned w = 0;
-      unsigned h = 0;
+    swap_buffer();
 
-      text = COverlayRGB::convert_time_to_text("CPU Re-size time                 : ", cpu_time_tot);
-      COverlayRGB::calculate_boundary_text(text, text_size, w, h);
-
-      int x = ((SCREEN_W - w) / 2);
-      int y = (145 + IMAGE_H);
-
-      COverlayRGB overlay_time_cpu(SCREEN_W, SCREEN_H);
-      overlay_time_cpu.alloc_mem_overlay(w, h);
-      overlay_time_cpu.copy_overlay(bg_overlay, x, y);
-      overlay_time_cpu.set_text(0, 0, text, text_size, 0x00f4419d);
-      overlay_time_cpu.print_to_display(x, y);
-
-      text = COverlayRGB::convert_time_to_text("Convolution (" + conv_freq + " MHz HW ACC)     : ", conv_time_tot);
-      COverlayRGB::calculate_boundary_text(text, text_size, w, h);
-
-      x = ((SCREEN_W - w) / 2);
-      y = (165 + IMAGE_H);
-
-      COverlayRGB overlay_time(SCREEN_W, SCREEN_H);
-      overlay_time.alloc_mem_overlay(w, h);
-      overlay_time.copy_overlay(bg_overlay, x, y);
-      overlay_time.set_text(0, 0, text, text_size, 0x00f4419d);
-      overlay_time.print_to_display(x, y);
-    }
-
-  }
+    handle_keyboard_input(exit_code, pause);
+ }
 
   dmp::util::shutdown();
   dmp::util::close_cam();
