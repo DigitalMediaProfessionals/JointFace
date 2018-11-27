@@ -318,13 +318,13 @@ void crop_resample(__fp16 *src_img, __fp16 *dst_img, int c_x, int c_y,
 void prepare_net_12_inputs(int net_12_size) {
   __fp16 *src_img, *dst_img;
   memcpy(net_12[0].in_buf, (void *)imgProc, IMAGE_W * IMAGE_H * 3 * 2);
-  
+
   // resample for level 1
   src_img = reinterpret_cast<__fp16 *>(imgProc);
   dst_img = reinterpret_cast<__fp16 *>(net_12[1].in_buf);
   resample(src_img, dst_img, net_12[0].in_w, net_12[0].in_h,
     net_12[1].in_w, net_12[1].in_h);
-    
+
   // downsample for level 2~
   for (int i = 2; i < net_12_size; ++i) {
     src_img = reinterpret_cast<__fp16 *>(net_12[i - 2].in_buf);
