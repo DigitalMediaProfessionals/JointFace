@@ -57,16 +57,23 @@ using namespace util;
 #define SCREEN_W (get_screen_width())
 #define SCREEN_H (get_screen_height())
 
+#ifdef __aarch64__
 #define IMAGE_W 640
 #define IMAGE_H 480
+#else
+#define IMAGE_W 320
+#define IMAGE_H 240
+#endif
 
 #define FILENAME_WEIGHTS12 "12Net_weights.bin"
 #define FILENAME_WEIGHTS24 "24Net_weights.bin"
 #define FILENAME_WEIGHTS48 "48Net_weights.bin"
 
 // Define CNN network model objects
+#ifdef __aarch64__
 C12Net_640x480 net_12_640x480;
 C12Net_448x336 net_12_448x336;
+#endif
 C12Net_320x240 net_12_320x240;
 C12Net_224x168 net_12_224x168;
 C12Net_160x120 net_12_160x120;
@@ -81,6 +88,7 @@ C48Net net_48;
 
 // C12Net scaled network series
 C12Net net_12[] = {
+#ifdef __aarch64__
   { &net_12_640x480, 640, 480, 315, 235, 1.0f,       nullptr },
   { &net_12_448x336, 448, 336, 219, 163, 1.4285714f, nullptr },
   { &net_12_320x240, 320, 240, 155, 115, 2.0f,       nullptr },
@@ -92,6 +100,17 @@ C12Net net_12[] = {
   { &net_12_40x30,    40,  30,  15,  10, 16.0f,      nullptr },
   { &net_12_28x21,    28,  21,   9,   6, 22.857143f, nullptr },
   { &net_12_20x15,    20,  15,   5,   3, 32.0f,      nullptr },
+#else
+  { &net_12_320x240, 320, 240, 155, 115, 1.0f,       nullptr },
+  { &net_12_224x168, 224, 168, 107,  79, 1.4285714f, nullptr },
+  { &net_12_160x120, 160, 120,  75,  55, 2.0f,       nullptr },
+  { &net_12_112x84,  112,  84,  51,  37, 2.8571429f, nullptr },
+  { &net_12_80x60,    80,  60,  35,  25, 4.0f,       nullptr },
+  { &net_12_56x42,    56,  42,  23,  16, 5.7142857f, nullptr },
+  { &net_12_40x30,    40,  30,  15,  10, 8.0f,       nullptr },
+  { &net_12_28x21,    28,  21,   9,   6, 11.428571f, nullptr },
+  { &net_12_20x15,    20,  15,   5,   3, 16.0f,      nullptr },
+#endif
 };
 
 const int net_12_size = sizeof(net_12) / sizeof(net_12[0]);
@@ -147,7 +166,11 @@ int main(int argc, char **argv) {
 
   // Get HW module frequency
   string conv_freq;
+#ifdef __aarch64__
   conv_freq = to_string(net_12_640x480.get_dv_info().conv_freq);
+#else
+  conv_freq = to_string(net_12_320x240.get_dv_info().conv_freq);
+#endif
 
   // Create background and image overlay
   COverlayRGB bg_overlay(SCREEN_W, SCREEN_H);
