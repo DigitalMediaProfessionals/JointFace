@@ -82,7 +82,7 @@ class C12Net_56x42 : public CDMP_Network {
 
   | ID | Layers | Type | Dim In | Dim Out | Param | Mem |
   | :- | :- | :-: | :-: | :-: | :-: | :-: |
-  | 5 | FPGA-Layer | Convolution | (16, 23, 32) | (16, 23, 4) | - | - |
+  | 5 | FPGA-Layer | Convolution | (16, 23, 32) | (1472,) | - | - |
   | 5-0 | conv4-2 | Convolution | (16, 23, 32) | (16, 23, 4) | - | 592 |
 
   */

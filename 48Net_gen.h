@@ -85,7 +85,8 @@ class C48Net : public CDMP_Network {
 
   | ID | Layers | Type | Dim In | Dim Out | Param | Mem |
   | :- | :- | :-: | :-: | :-: | :-: | :-: |
-  | 5 | FPGA-Layer | InnerProduct | (1, 1, 256) | (2,) | - | - |
+  | 5 | FPGA-Layer | Convolution | (1, 1, 256) | (1, 1, 2) | - | - |
+  | 5-0 | conv6-1 | InnerProduct | (1, 1, 256) | (1, 1, 2) | - | 1168 |
 
   */
   void Layer_5();
@@ -95,7 +96,7 @@ class C48Net : public CDMP_Network {
 
   | ID | Layers | Type | Dim In | Dim Out | Param | Mem |
   | :- | :- | :-: | :-: | :-: | :-: | :-: |
-  | 6 | FPGA-Layer | SoftMax | (2,) | (2,) | - | - |
+  | 6 | FPGA-Layer | SoftMax | (1, 1, 2) | (1, 1, 2) | - | - |
 
   */
   void Layer_6();
@@ -105,7 +106,8 @@ class C48Net : public CDMP_Network {
 
   | ID | Layers | Type | Dim In | Dim Out | Param | Mem |
   | :- | :- | :-: | :-: | :-: | :-: | :-: |
-  | 7 | FPGA-Layer | InnerProduct | (1, 1, 256) | (10,) | - | - |
+  | 7 | FPGA-Layer | Convolution | (1, 1, 256) | (1, 1, 10) | - | - |
+  | 7-0 | conv6-3 | InnerProduct | (1, 1, 256) | (1, 1, 10) | - | 5792 |
 
   */
   void Layer_7();
@@ -115,7 +117,8 @@ class C48Net : public CDMP_Network {
 
   | ID | Layers | Type | Dim In | Dim Out | Param | Mem |
   | :- | :- | :-: | :-: | :-: | :-: | :-: |
-  | 8 | FPGA-Layer | InnerProduct | (1, 1, 256) | (4,) | - | - |
+  | 8 | FPGA-Layer | Convolution | (1, 1, 256) | (1, 1, 4) | - | - |
+  | 8-0 | conv6-2 | InnerProduct | (1, 1, 256) | (1, 1, 4) | - | 2320 |
 
   */
   void Layer_8();

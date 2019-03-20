@@ -28,7 +28,7 @@ C12Net_40x30::~C12Net_40x30() {
 }
 
 bool C12Net_40x30::Initialize() {
-  if (!ReserveMemory(16416, 16128)) {
+  if (!ReserveMemory(16416, 17936)) {
     return false;
   }
 
@@ -50,7 +50,6 @@ bool C12Net_40x30::Initialize() {
 //  ->: PReLU1
 //  ->: pool1
 void C12Net_40x30::Layer_0() {
-  get_layer(0).name = "conv1, PReLU1, pool1";
   dmp_dv_cmdraw_conv_v0& conf = get_layer(0).conv_conf;
   conf.header.size = sizeof(conf);
   conf.header.device_type = DMP_DV_DEV_CONV;
@@ -64,11 +63,11 @@ void C12Net_40x30::Layer_0() {
   conf.z = 1;  // Input Depth
   conf.c = 3;  // Input Channels
   conf.input_buf.mem = io_mem_;
-  conf.input_buf.offs = 0;
+  conf.input_buf.offs = 5328;
 
   // Output Configuration:
   conf.output_buf.mem = io_mem_;
-  conf.output_buf.offs = 7200;
+  conf.output_buf.offs = 0;
 
   conf.eltwise_buf.mem = NULL;
   conf.eltwise_buf.offs = 0;  // Input byte address for elementwise add (0 = UBUF Input Buffer)
@@ -103,9 +102,10 @@ void C12Net_40x30::Layer_0() {
   conf.run[0].lrn = 0x0;  // [0] : 1 = LRN enable, 0 = LRN disable, [1] : 1 = incl. power func, 0 = excl., [8:11] = x^2 scale factor log2
 
   fpga_layer& layer = get_layer(0);
+  layer.name = "pool1";
   layer.type = LT_CONV;
-  layer.input_offs = 0;
-  layer.output_offs = 7200;
+  layer.input_offs = 5328;
+  layer.output_offs = 0;
   layer.output_size = 5320;
   layer.input_dim[0] = 30;
   layer.input_dim[1] = 40;
@@ -124,7 +124,6 @@ void C12Net_40x30::Layer_0() {
 //  ->: conv2
 //  ->: PReLU2
 void C12Net_40x30::Layer_1() {
-  get_layer(1).name = "conv2, PReLU2";
   dmp_dv_cmdraw_conv_v0& conf = get_layer(1).conv_conf;
   conf.header.size = sizeof(conf);
   conf.header.device_type = DMP_DV_DEV_CONV;
@@ -138,11 +137,11 @@ void C12Net_40x30::Layer_1() {
   conf.z = 1;  // Input Depth
   conf.c = 10;  // Input Channels
   conf.input_buf.mem = io_mem_;
-  conf.input_buf.offs = 7200;
+  conf.input_buf.offs = 0;
 
   // Output Configuration:
   conf.output_buf.mem = io_mem_;
-  conf.output_buf.offs = 0;
+  conf.output_buf.offs = 11408;
 
   conf.eltwise_buf.mem = NULL;
   conf.eltwise_buf.offs = 0;  // Input byte address for elementwise add (0 = UBUF Input Buffer)
@@ -176,9 +175,10 @@ void C12Net_40x30::Layer_1() {
   conf.run[0].lrn = 0x0;  // [0] : 1 = LRN enable, 0 = LRN disable, [1] : 1 = incl. power func, 0 = excl., [8:11] = x^2 scale factor log2
 
   fpga_layer& layer = get_layer(1);
+  layer.name = "conv2";
   layer.type = LT_CONV;
-  layer.input_offs = 7200;
-  layer.output_offs = 0;
+  layer.input_offs = 0;
+  layer.output_offs = 11408;
   layer.output_size = 6528;
   layer.input_dim[0] = 14;
   layer.input_dim[1] = 19;
@@ -197,7 +197,6 @@ void C12Net_40x30::Layer_1() {
 //  ->: conv3
 //  ->: PReLU3
 void C12Net_40x30::Layer_2() {
-  get_layer(2).name = "conv3, PReLU3";
   dmp_dv_cmdraw_conv_v0& conf = get_layer(2).conv_conf;
   conf.header.size = sizeof(conf);
   conf.header.device_type = DMP_DV_DEV_CONV;
@@ -211,11 +210,11 @@ void C12Net_40x30::Layer_2() {
   conf.z = 1;  // Input Depth
   conf.c = 16;  // Input Channels
   conf.input_buf.mem = io_mem_;
-  conf.input_buf.offs = 0;
+  conf.input_buf.offs = 11408;
 
   // Output Configuration:
   conf.output_buf.mem = io_mem_;
-  conf.output_buf.offs = 6528;
+  conf.output_buf.offs = 1808;
 
   conf.eltwise_buf.mem = NULL;
   conf.eltwise_buf.offs = 0;  // Input byte address for elementwise add (0 = UBUF Input Buffer)
@@ -249,9 +248,10 @@ void C12Net_40x30::Layer_2() {
   conf.run[0].lrn = 0x0;  // [0] : 1 = LRN enable, 0 = LRN disable, [1] : 1 = incl. power func, 0 = excl., [8:11] = x^2 scale factor log2
 
   fpga_layer& layer = get_layer(2);
+  layer.name = "conv3";
   layer.type = LT_CONV;
-  layer.input_offs = 0;
-  layer.output_offs = 6528;
+  layer.input_offs = 11408;
+  layer.output_offs = 1808;
   layer.output_size = 9600;
   layer.input_dim[0] = 12;
   layer.input_dim[1] = 17;
@@ -269,7 +269,6 @@ void C12Net_40x30::Layer_2() {
 //Layer_3: Convolution Layer
 //  ->: conv4-1
 void C12Net_40x30::Layer_3() {
-  get_layer(3).name = "conv4-1";
   dmp_dv_cmdraw_conv_v0& conf = get_layer(3).conv_conf;
   conf.header.size = sizeof(conf);
   conf.header.device_type = DMP_DV_DEV_CONV;
@@ -283,7 +282,7 @@ void C12Net_40x30::Layer_3() {
   conf.z = 1;  // Input Depth
   conf.c = 32;  // Input Channels
   conf.input_buf.mem = io_mem_;
-  conf.input_buf.offs = 6528;
+  conf.input_buf.offs = 1808;
 
   // Output Configuration:
   conf.output_buf.mem = io_mem_;
@@ -320,8 +319,9 @@ void C12Net_40x30::Layer_3() {
   conf.run[0].lrn = 0x0;  // [0] : 1 = LRN enable, 0 = LRN disable, [1] : 1 = incl. power func, 0 = excl., [8:11] = x^2 scale factor log2
 
   fpga_layer& layer = get_layer(3);
+  layer.name = "conv4-1";
   layer.type = LT_CONV;
-  layer.input_offs = 6528;
+  layer.input_offs = 1808;
   layer.output_offs = 0;
   layer.output_size = 600;
   layer.input_dim[0] = 10;
@@ -341,10 +341,11 @@ void C12Net_40x30::Layer_3() {
 //	->: prob1
 void C12Net_40x30::Layer_4() {
   fpga_layer& layer = get_layer(4);
+  layer.name = "prob1";
   layer.type = LT_SOFTMAX;
   layer.input_offs = 0;
-  layer.output_offs = 608;
-  layer.output_size = 1200;
+  layer.output_offs = 1200;
+  layer.output_size = 600;
   layer.input_dim[0] = 10;
   layer.input_dim[1] = 15;
   layer.input_dim[2] = 2;
@@ -354,7 +355,7 @@ void C12Net_40x30::Layer_4() {
   layer.output_dim[2] = 2;
   layer.output_dim_size = 3;
   layer.is_output = true;
-  layer.is_f32_output = true;
+  layer.is_f32_output = false;
   layer.is_input_hw_layout = true;
   layer.softmax_axis = 2;
   output_layers_[0] = &layer;
@@ -363,7 +364,6 @@ void C12Net_40x30::Layer_4() {
 //Layer_5: Convolution Layer
 //  ->: conv4-2
 void C12Net_40x30::Layer_5() {
-  get_layer(5).name = "conv4-2";
   dmp_dv_cmdraw_conv_v0& conf = get_layer(5).conv_conf;
   conf.header.size = sizeof(conf);
   conf.header.device_type = DMP_DV_DEV_CONV;
@@ -377,11 +377,11 @@ void C12Net_40x30::Layer_5() {
   conf.z = 1;  // Input Depth
   conf.c = 32;  // Input Channels
   conf.input_buf.mem = io_mem_;
-  conf.input_buf.offs = 6528;
+  conf.input_buf.offs = 1808;
 
   // Output Configuration:
   conf.output_buf.mem = io_mem_;
-  conf.output_buf.offs = 1808;
+  conf.output_buf.offs = 0;
 
   conf.eltwise_buf.mem = NULL;
   conf.eltwise_buf.offs = 0;  // Input byte address for elementwise add (0 = UBUF Input Buffer)
@@ -414,18 +414,17 @@ void C12Net_40x30::Layer_5() {
   conf.run[0].lrn = 0x0;  // [0] : 1 = LRN enable, 0 = LRN disable, [1] : 1 = incl. power func, 0 = excl., [8:11] = x^2 scale factor log2
 
   fpga_layer& layer = get_layer(5);
+  layer.name = "dmp_conv_flat_0";
   layer.type = LT_CONV;
-  layer.input_offs = 6528;
-  layer.output_offs = 1808;
+  layer.input_offs = 1808;
+  layer.output_offs = 0;
   layer.output_size = 1200;
   layer.input_dim[0] = 10;
   layer.input_dim[1] = 15;
   layer.input_dim[2] = 32;
   layer.input_dim_size = 3;
-  layer.output_dim[0] = 10;
-  layer.output_dim[1] = 15;
-  layer.output_dim[2] = 4;
-  layer.output_dim_size = 3;
+  layer.output_dim[0] = 600;
+  layer.output_dim_size = 1;
   layer.is_output = true;
   layer.is_f32_output = false;
   layer.is_input_hw_layout = true;
